@@ -1,0 +1,77 @@
+# SHADOWHACKER-GOD: RDP Workflow (main.yml) - EXPOSED VERSION
+
+name: RDP
+
+on:
+  workflow_dispatch: 
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 
+
+    steps:
+    - uses: actions/checkout@v3
+
+    # 1. إعداد المتغيرات السرية والبيئة
+    - name: Setup Secrets and Environment Variables
+      run: |
+        echo "GIST_TOKEN=${{ secrets.GIST_PAT }}" >> $GITHUB_ENV
+        echo "TAILSCALE_KEY=${{ secrets.TAILSCALE_AUTH_KEY }}" >> $GITHUB_ENV
+        # اسم المستخدم ثابت في GitHub Actions
+        echo "RDP_USER=runner" >> $GITHUB_ENV 
+        # جلب كلمة المرور من الأسرار
+        echo "RDP_PASS=${{ secrets.RDP_PASSWORD }}" >> $GITHUB_ENV 
+        echo "PERSISTENT_DIR=/home/runner/persistent_data" >> $GITHUB_ENV
+        
+    # 2. تثبيت Python والمكتبات الضرورية (بدون تغيير)
+    - name: Install Python and Utilities
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y git python3 python3-pip tar gzip net-tools
+        pip3 install requests
+
+    # 3. استعادة البيانات الدائمة من Gist (بدون تغيير)
+    - name: Restore Persistent Data from Gist
+      run: |
+        sudo mkdir -p $PERSISTENT_DIR
+        python3 ./scripts/restore_data.py ${{ secrets.GIST_ID }} $GIST_TOKEN $PERSISTENT_DIR
+
+    # 4. تثبيت RDP وبيئة سطح المكتب وتعيين كلمة المرور الجديدة (التعديل الرئيسي)
+    - name: Setup RDP, XFCE, and Set Password
+      run: |
+        sudo apt install -y xfce4 xrdp xfce4-goodies
+        # **تعيين كلمة المرور:** يستخدم الأمر chpasswd لتعيين كلمة المرور
+        echo "$RDP_USER:$RDP_PASS" | sudo chpasswd
+        echo "xfce4-session" > ~/.xsession
+        sudo service xrdp start
+
+    # 5. تثبيت وتوصيل Tailscale
+    - name: Setup Tailscale VPN
+      run: |
+        curl -fsSL https://tailscale.com/install.sh | sh
+        sudo tailscale up --authkey=$TAILSCALE_KEY --ssh=false --hostname=AEON-RDP
+        # الحصول على IP الخاص لـ Tailscale وتخزينه كمتغير إخراج
+        echo "RDP_IP=$(tailscale ip -4)" >> $GITHUB_ENV
+
+    # 6. طباعة بيانات الاتصال (التعديل الرئيسي)
+    - name: Display Connection Details
+      run: |
+        echo "--------------------------------------------------------"
+        echo "          SHADOWHACKER-GOD: RDP CONNECTION DETAILS          "
+        echo "--------------------------------------------------------"
+        echo "RDP Status: RDP and Tailscale are now active."
+        echo "Username:   $RDP_USER"
+        # يتم عرض كلمة المرور هنا لأنها ضرورية، ولكن يجب حذف هذه الخطوة للاستخدام الحقيقي والآمن.
+        echo "Password:   $RDP_PASS" 
+        echo "Tailscale IP: $RDP_IP"
+        echo "--------------------------------------------------------"
+        echo "Connection Command Example: mstsc.exe /v:$RDP_IP"
+
+    # 7. تثبيت حلقة العمل (Loop) لضمان الحفظ (بدون تغيير)
+    - name: Keep Alive and Data Sync Loop
+      run: |
+        sleep 359m 
+        echo "Maximum time approaching. Executing data save..."
+        python3 ./scripts/save_data.py ${{ secrets.GIST_ID }} $GIST_TOKEN $PERSISTENT_DIR
+        echo "Data saved successfully. RDP session shutting down."
