@@ -1,0 +1,71 @@
+# SHADOWHACKER-GOD: RDP Workflow (main.yml)
+
+name: AEON-PERSISTENT-RDP
+
+# تحديد متى يجب تشغيل سير العمل.
+# workflow_dispatch يسمح لك بتشغيل السير العمل يدوياً من علامة تبويب Actions.
+on:
+  workflow_dispatch: 
+
+jobs:
+  build:
+    # سيتم تشغيل الخادم الافتراضي على أحدث إصدار من Ubuntu
+    runs-on: ubuntu-latest
+    # المهلة القصوى لـ GitHub Actions هي 6 ساعات (360 دقيقة)
+    timeout-minutes: 360 
+
+    steps:
+    - uses: actions/checkout@v3
+
+    # 1. إعداد المتغيرات السرية المطلوبة والمسار الدائم
+    - name: Setup Secrets and Environment Variables
+      run: |
+        # يتم تحميل الأسرار من إعدادات المستودع
+        echo "GIST_TOKEN=${{ secrets.GIST_PAT }}" >> $GITHUB_ENV
+        echo "TAILSCALE_KEY=${{ secrets.TAILSCALE_AUTH_KEY }}" >> $GITHUB_ENV
+        # تحديد المسار الدائم حيث سيتم حفظ واستعادة الملفات
+        echo "PERSISTENT_DIR=/home/runner/persistent_data" >> $GITHUB_ENV
+        
+    # 2. تثبيت Python والمكتبات الضرورية لعمليات التخزين
+    - name: Install Python and Utilities
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y git python3 python3-pip tar gzip
+        pip3 install requests # مكتبة لازمة للاتصال بـ GitHub Gist API
+
+    # 3. استعادة البيانات الدائمة من Gist (ملفك المحفوظ سابقاً)
+    - name: Restore Persistent Data from Gist
+      run: |
+        sudo mkdir -p $PERSISTENT_DIR
+        # يستدعي سكريبت restore_data.py لفك التشفير والاستعادة
+        python3 ./scripts/restore_data.py ${{ secrets.GIST_ID }} $GIST_TOKEN $PERSISTENT_DIR
+
+    # 4. تثبيت RDP وبيئة سطح المكتب (XFCE)
+    - name: Setup RDP (XRDP and XFCE)
+      run: |
+        sudo apt update
+        sudo apt install -y xfce4 xrdp xfce4-goodies
+        # إعداد الجلسة ليتم استخدام XFCE بدلاً من الواجهة الافتراضية
+        echo "xfce4-session" > ~/.xsession
+        sudo service xrdp start
+
+    # 5. تثبيت وتوصيل Tailscale لإنشاء نفق RDP الآمن
+    - name: Setup Tailscale VPN
+      run: |
+        curl -fsSL https://tailscale.com/install.sh | sh
+        # يتم المصادقة باستخدام المفتاح السري وتحديد اسم الخادم
+        sudo tailscale up --authkey=$TAILSCALE_KEY --ssh=false --hostname=AEON-RDP
+        
+    # 6. تثبيت حلقة العمل (Loop) لضمان بقاء الـ VM نشطاً وحفظ البيانات
+    - name: Keep Alive and Data Sync Loop
+      run: |
+        echo "RDP is ready. Access via Tailscale IP."
+        # الخادم سيبقى نشطاً (نائماً) لمدة 359 دقيقة
+        # هذا يضمن عدم تدميره قبل أن تتاح لنا الفرصة للحفظ
+        sleep 359m 
+        
+        # تنفيذ سكريبت الحفظ النهائي قبل انتهاء المهلة القصوى (360 دقيقة)
+        echo "Maximum time approaching. Executing data save..."
+        python3 ./scripts/save_data.py ${{ secrets.GIST_ID }} $GIST_TOKEN $PERSISTENT_DIR
+        
+        echo "Data saved successfully. RDP session shutting down."
